@@ -167,6 +167,7 @@ def preprocess_opts(parser):
     """ Pre-procesing options """
     # Data options
     group = parser.add_argument_group('Data')
+    # TODO 1/19: include audio, feats data_type s
     group.add('--data_type', '-data_type', default="text",
               help="""Type of the source input.
                        Options are [text|img].""")

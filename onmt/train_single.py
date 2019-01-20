@@ -6,7 +6,6 @@
 import configargparse
 
 import os
-import glob
 from itertools import chain
 
 import torch
@@ -15,6 +14,7 @@ import onmt.opts as opts
 
 from onmt.inputters.inputter import build_dataset_iter, \
     load_old_vocab, old_style_vocab
+from onmt.datatypes import str2datatype
 from onmt.model_builder import build_model
 from onmt.utils.optimizers import Optimizer
 from onmt.utils.misc import set_random_seed
@@ -102,16 +102,14 @@ def main(opt, device_id):
         model_opt = opt
         vocab = torch.load(opt.data + '.vocab.pt')
 
-    # Load a shard dataset to determine the data_type.
-    # (All datasets have the same data_type).
-    # this should be refactored out of existence reasonably soon
-    first_dataset = torch.load(glob.glob(opt.data + '.train*.pt')[0])
-    data_type = first_dataset.data_type
+    src_data_type = str2datatype[model_opt.model_type]
+    tgt_data_type = str2datatype['text']
 
     # check for code where vocab is saved instead of fields
     # (in the future this will be done in a smarter way)
     if old_style_vocab(vocab):
-        fields = load_old_vocab(vocab, data_type, dynamic_dict=opt.copy_attn)
+        fields = load_old_vocab(vocab, src_data_type,
+                                tgt_data_type, dynamic_dict=opt.copy_attn)
     else:
         fields = vocab
 
@@ -136,7 +134,7 @@ def main(opt, device_id):
     model_saver = build_model_saver(model_opt, opt, model, fields, optim)
 
     trainer = build_trainer(opt, device_id, model, fields,
-                            optim, data_type, model_saver=model_saver)
+                            optim, src_data_type, model_saver=model_saver)
 
     # this line is kind of a temporary kludge because different objects expect
     # fields to have a different structure

@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.nn.init import xavier_uniform_
 
 import onmt.inputters as inputters
+import onmt.datatypes as datatypes
 import onmt.modules
 from onmt.encoders.rnn_encoder import RNNEncoder
 from onmt.encoders.transformer import TransformerEncoder
@@ -151,10 +152,11 @@ def load_test_model(opt, dummy_opt, model_path=None):
 
     model_opt = checkpoint['opt']
     vocab = checkpoint['vocab']
+    src_dtype = datatypes.str2datatype[opt.data_type]
+    tgt_dtype = datatypes.text_datatype
     if inputters.old_style_vocab(vocab):
         fields = inputters.load_old_vocab(
-            vocab, opt.data_type, dynamic_dict=model_opt.copy_attn
-        )
+            vocab, src_dtype, tgt_dtype, dynamic_dict=model_opt.copy_attn)
     else:
         fields = vocab
 

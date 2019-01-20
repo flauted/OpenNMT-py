@@ -14,6 +14,7 @@ from onmt.utils.misc import tile
 import onmt.model_builder
 import onmt.translate.beam
 import onmt.inputters as inputters
+import onmt.datatypes as datatypes
 import onmt.opts as opts
 import onmt.decoders.ensemble
 from onmt.utils.misc import set_random_seed
@@ -104,7 +105,8 @@ class Translator(object):
         self.window = opt.window
         self.image_channel_size = opt.image_channel_size
         self.replace_unk = opt.replace_unk
-        self.data_type = opt.data_type
+        self.data_type = datatypes.str2datatype[opt.data_type]
+        self._src_reader = self.data_type.reader.from_opt(opt)
         self.verbose = opt.verbose
         self.report_bleu = opt.report_bleu
         self.report_rouge = opt.report_rouge
@@ -170,14 +172,12 @@ class Translator(object):
             self.fields,
             self.data_type,
             src=src,
+            src_reader=self._src_reader,
+            tgt_dtype=datatypes.text_datatype,
             tgt=tgt,
+            tgt_reader=datatypes.text_datatype.reader(),
             src_dir=src_dir,
-            sample_rate=self.sample_rate,
-            window_size=self.window_size,
-            window_stride=self.window_stride,
-            window=self.window,
             use_filter_pred=self.use_filter_pred,
-            image_channel_size=self.image_channel_size,
         )
 
         cur_device = "cuda" if self.cuda else "cpu"
@@ -236,7 +236,7 @@ class Translator(object):
                     preds = trans.pred_sents[0]
                     preds.append('</s>')
                     attns = trans.attns[0].tolist()
-                    if self.data_type == 'text':
+                    if self.data_type is datatypes.text_datatype:
                         srcs = trans.src_raw
                     else:
                         srcs = [str(item) for item in range(len(attns[0]))]
@@ -337,10 +337,11 @@ class Translator(object):
 
         # Encoder forward.
         src, enc_states, memory_bank, src_lengths = self._run_encoder(
-            batch, data.data_type)
+            batch, self.data_type)
         self.model.decoder.init_state(src, memory_bank, enc_states)
 
-        use_src_map = data.data_type == 'text' and self.copy_attn
+        use_src_map = (self.data_type is datatypes.text_datatype
+                       and self.copy_attn)
 
         results = {}
         results["predictions"] = [[] for _ in range(batch_size)]  # noqa: F812
@@ -458,11 +459,17 @@ class Translator(object):
                 return self._translate_batch(batch, data)
 
     def _run_encoder(self, batch, data_type):
+        """Run the encoder.
+
+        Args:
+            batch: A batch of source or target data.
+            data_type (datatypes.Datatype)
+        """
         src = inputters.make_features(batch, 'src', data_type)
         src_lengths = None
-        if data_type == 'text':
+        if data_type is datatypes.text_datatype:
             _, src_lengths = batch.src
-        elif data_type == 'audio':
+        elif data_type is datatypes.audio_datatype:
             src_lengths = batch.src_lengths
         enc_states, memory_bank, src_lengths = self.model.encoder(
             src, src_lengths)
@@ -557,10 +564,11 @@ class Translator(object):
 
         # Encoder forward.
         src, enc_states, memory_bank, src_lengths = self._run_encoder(
-            batch, data.data_type)
+            batch, self.data_type)
         self.model.decoder.init_state(src, memory_bank, enc_states)
 
-        use_src_map = data.data_type == 'text' and self.copy_attn
+        use_src_map = (self.data_type is datatypes.text_datatype
+                       and self.copy_attn)
 
         results = {}
         results["predictions"] = [[] for _ in range(batch_size)]  # noqa: F812
@@ -745,7 +753,6 @@ class Translator(object):
         # And helper method for reducing verbosity.
         beam_size = self.beam_size
         batch_size = batch.batch_size
-        data_type = data.data_type
         tgt_field = self.fields['tgt'][0][1]
         vocab = tgt_field.vocab
 
@@ -767,7 +774,7 @@ class Translator(object):
 
         # (1) Run the encoder on the src.
         src, enc_states, memory_bank, src_lengths = self._run_encoder(
-            batch, data_type)
+            batch, self.data_type)
         self.model.decoder.init_state(src, memory_bank, enc_states)
 
         results = {}
@@ -778,7 +785,8 @@ class Translator(object):
         if "tgt" in batch.__dict__:
             results["gold_score"] = self._score_target(
                 batch, memory_bank, src_lengths, data, batch.src_map
-                if data_type == 'text' and self.copy_attn else None)
+                if self.data_type is datatypes.text_datatype
+                and self.copy_attn else None)
             self.model.decoder.init_state(src, memory_bank, enc_states)
         else:
             results["gold_score"] = [0] * batch_size
@@ -786,7 +794,8 @@ class Translator(object):
         # (2) Repeat src objects `beam_size` times.
         # We use now  batch_size x beam_size (same as fast mode)
         src_map = (tile(batch.src_map, beam_size, dim=1)
-                   if data.data_type == 'text' and self.copy_attn else None)
+                   if self.data_type is datatypes.text_datatype
+                   and self.copy_attn else None)
         self.model.decoder.map_state(
             lambda state, dim: tile(state, beam_size, dim=dim))
 

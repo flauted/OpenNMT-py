@@ -11,10 +11,12 @@ PYTHON="python"
 
 clean_up()
 {
-    rm ${LOG_FILE}
-    rm -rf /tmp/*pt
-    rm -rf /tmp/im2text
-    rm -rf /tm/speech
+  rm ${LOG_FILE}
+  mv /tmp/test_model_speech.pt ${DATA_DIR}
+  mv /tmp/test_model_im2text.pt ${DATA_DIR}
+  rm -rf /tmp/*pt
+  rm -rf /tmp/im2text
+  rm -rf /tmp/speech
 }
 trap clean_up SIGINT SIGQUIT SIGKILL
 
@@ -27,25 +29,35 @@ error_exit()
 
 environment_prepare()
 {
-  # Download img2text corpus
-  wget -q -O /tmp/im2text.tgz http://lstm.seas.harvard.edu/latex/im2text_small.tgz
+  if [[ "${QUICK}" != 1 ]]; then
+    # Download img2text corpus
+    wget -q -O /tmp/im2text.tgz http://lstm.seas.harvard.edu/latex/im2text_small.tgz
+  fi
   tar zxf /tmp/im2text.tgz -C /tmp/
   head /tmp/im2text/src-train.txt > /tmp/im2text/src-train-head.txt
   head /tmp/im2text/tgt-train.txt > /tmp/im2text/tgt-train-head.txt
   head /tmp/im2text/src-val.txt > /tmp/im2text/src-val-head.txt
   head /tmp/im2text/tgt-val.txt > /tmp/im2text/tgt-val-head.txt
 
-  wget -q -O /tmp/test_model_speech.pt http://lstm.seas.harvard.edu/latex/model_step_2760.pt
+  if [[ "${QUICK}" != 1 ]]; then
+    wget -q -O /tmp/test_model_speech.pt http://lstm.seas.harvard.edu/latex/model_step_2760.pt
+    wget -q -O /tmp/speech.tgz http://lstm.seas.harvard.edu/latex/speech.tgz
+  else
+    mv ${DATA_DIR}/test_model_speech.pt /tmp
+  fi
 
   # Download speech2text corpus
-  wget -q -O /tmp/speech.tgz http://lstm.seas.harvard.edu/latex/speech.tgz
   tar zxf /tmp/speech.tgz -C /tmp/
   head /tmp/speech/src-train.txt > /tmp/speech/src-train-head.txt
   head /tmp/speech/tgt-train.txt > /tmp/speech/tgt-train-head.txt
   head /tmp/speech/src-val.txt > /tmp/speech/src-val-head.txt
   head /tmp/speech/tgt-val.txt > /tmp/speech/tgt-val-head.txt
 
-  wget -q -O /tmp/test_model_im2text.pt http://lstm.seas.harvard.edu/latex/test_model_im2text.pt
+  if [[ "${QUICK}" != 1 ]]; then
+    wget -q -O /tmp/test_model_im2text.pt http://lstm.seas.harvard.edu/latex/test_model_im2text.pt
+  else
+    mv ${DATA_DIR}/test_model_im2text.pt /tmp
+  fi
 }
 
 # flake8 check

@@ -181,7 +181,7 @@ class CopyGeneratorLossCompute(LossComputeBase):
 
         # this block does not depend on the loss value computed above
         # and is used only for stats
-        scores_data = inputters.TextDataset.collapse_copy_scores(
+        scores_data = inputters.Dataset.collapse_copy_scores(
             self._unbottle(scores.clone(), batch.batch_size),
             batch, self.tgt_vocab, batch.dataset.src_vocabs)
         scores_data = self._bottle(scores_data)

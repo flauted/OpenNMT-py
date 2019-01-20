@@ -11,6 +11,7 @@ import codecs
 
 import onmt
 import onmt.inputters
+import onmt.datatypes
 import onmt.opts
 import preprocess
 
@@ -38,7 +39,12 @@ class TestData(unittest.TestCase):
         self.opt = opt
 
     def dataset_build(self, opt):
-        fields = onmt.inputters.get_fields("text", 0, 0)
+        src_dtype = onmt.datatypes.str2datatype[opt.data_type]
+        tgt_dtype = onmt.datatypes.text_datatype
+        fields = onmt.inputters.get_fields(
+            src_dtype,
+            tgt_dtype,
+            0, 0)
 
         if hasattr(opt, 'src_vocab') and len(opt.src_vocab) > 0:
             with codecs.open(opt.src_vocab, 'w', 'utf-8') as f:
@@ -47,11 +53,24 @@ class TestData(unittest.TestCase):
             with codecs.open(opt.tgt_vocab, 'w', 'utf-8') as f:
                 f.write('a\nb\nc\nd\ne\nf\n')
 
-        train_data_files = preprocess.build_save_dataset('train', fields, opt)
+        train_data_files = preprocess.build_save_dataset(
+            'train', fields,
+            src_dtype.reader.from_opt(opt),
+            tgt_dtype.reader(),
+            src_dtype,
+            tgt_dtype,
+            opt)
 
-        preprocess.build_save_vocab(train_data_files, fields, opt)
+        preprocess.build_save_vocab(train_data_files, fields, src_dtype, opt)
 
-        preprocess.build_save_dataset('valid', fields, opt)
+        preprocess.build_save_dataset(
+            'valid', fields,
+            src_dtype.reader.from_opt(opt),
+            tgt_dtype.reader(),
+            src_dtype,
+            tgt_dtype,
+            opt
+        )
 
         # Remove the generated *pt files.
         for pt in glob.glob(SAVE_DATA_PREFIX + '*.pt'):

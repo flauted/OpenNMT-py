@@ -23,6 +23,7 @@ class TranslationBuilder(object):
     def __init__(self, data, fields, n_best=1, replace_unk=False,
                  has_tgt=False):
         self.data = data
+        self.data_type = self.data.src_data_type.name
         self.fields = fields
         self.n_best = n_best
         self.replace_unk = replace_unk
@@ -63,7 +64,7 @@ class TranslationBuilder(object):
 
         # Sorting
         inds, perm = torch.sort(batch.indices)
-        data_type = self.data.data_type
+        data_type = self.data_type
         if data_type == 'text':
             src = batch.src[0].index_select(1, perm)
         else:

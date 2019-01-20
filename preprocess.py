@@ -15,6 +15,7 @@ from onmt.utils.logging import init_logger, logger
 
 import onmt.inputters as inputters
 import onmt.opts as opts
+import onmt.datatypes as datatypes
 
 
 class PtFilesExistError(Exception):
@@ -64,7 +65,24 @@ def split_corpus(path, shard_size):
             yield shard
 
 
-def build_save_dataset(corpus_type, fields, opt):
+def get_dtypes(opt):
+    try:
+        src_dtype = datatypes.str2datatype[opt.data_type]
+    except KeyError:
+        raise NotImplementedError("source data_type {:s} not found".format(
+            opt.data_type))
+    tgt_dtype = datatypes.text_datatype
+    return src_dtype, tgt_dtype
+
+
+def build_readers(src_dtype, tgt_dtype, opt):
+    src_reader = src_dtype.reader.from_opt(opt)
+    tgt_reader = tgt_dtype.reader()
+    return src_reader, tgt_reader
+
+
+def build_save_dataset(corpus_type, fields, src_reader, tgt_reader,
+                       src_dtype, tgt_dtype, opt):
     assert corpus_type in ['train', 'valid']
 
     if corpus_type == 'train':
@@ -85,17 +103,16 @@ def build_save_dataset(corpus_type, fields, opt):
         assert len(src_shard) == len(tgt_shard)
         logger.info("Building shard %d." % i)
         dataset = inputters.build_dataset(
-            fields, opt.data_type,
+            fields,
+            src_dtype,
             src=src_shard,
+            src_reader=src_reader,
+            tgt_dtype=tgt_dtype,
             tgt=tgt_shard,
+            tgt_reader=tgt_reader,
             src_dir=opt.src_dir,
             src_seq_len=opt.src_seq_length,
             tgt_seq_len=opt.tgt_seq_length,
-            sample_rate=opt.sample_rate,
-            window_size=opt.window_size,
-            window_stride=opt.window_stride,
-            window=opt.window,
-            image_channel_size=opt.image_channel_size,
             use_filter_pred=corpus_type == 'train' or opt.filter_valid
         )
 
@@ -115,9 +132,9 @@ def build_save_dataset(corpus_type, fields, opt):
     return dataset_paths
 
 
-def build_save_vocab(train_dataset, fields, opt):
+def build_save_vocab(train_dataset, fields, src_dtype, opt):
     fields = inputters.build_vocab(
-        train_dataset, fields, opt.data_type, opt.share_vocab,
+        train_dataset, fields, src_dtype, opt.share_vocab,
         opt.src_vocab, opt.src_vocab_size, opt.src_words_min_frequency,
         opt.tgt_vocab, opt.tgt_vocab_size, opt.tgt_words_min_frequency
     )
@@ -162,23 +179,33 @@ def main():
     logger.info(" * number of source features: %d." % src_nfeats)
     logger.info(" * number of target features: %d." % tgt_nfeats)
 
+    src_dtype, tgt_dtype = get_dtypes(opt)
+
     logger.info("Building `Fields` object...")
     fields = inputters.get_fields(
-        opt.data_type,
+        src_dtype,
+        tgt_dtype,
         src_nfeats,
         tgt_nfeats,
         dynamic_dict=opt.dynamic_dict,
         src_truncate=opt.src_seq_length_trunc,
         tgt_truncate=opt.tgt_seq_length_trunc)
 
+    src_reader, tgt_reader = build_readers(src_dtype, tgt_dtype, opt)
+
     logger.info("Building & saving training data...")
-    train_dataset_files = build_save_dataset('train', fields, opt)
+    train_dataset_files = build_save_dataset(
+        'train', fields, src_reader, tgt_reader,
+        src_dtype, tgt_dtype, opt)
 
     logger.info("Building & saving validation data...")
-    build_save_dataset('valid', fields, opt)
+    build_save_dataset(
+        'valid', fields, src_reader, tgt_reader,
+        src_dtype, tgt_dtype, opt)
 
     logger.info("Building & saving vocabulary...")
-    build_save_vocab(train_dataset_files, fields, opt)
+    build_save_vocab(
+        train_dataset_files, fields, src_dtype, opt)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@
 import torch
 import onmt.inputters as inputters
 import onmt.utils
+import onmt.datatypes as datatypes
 
 from onmt.utils.logging import logger
 
@@ -62,24 +63,24 @@ class Trainer(object):
     Class that controls the training process.
 
     Args:
-            model(:py:class:`onmt.models.model.NMTModel`): translation model
-                to train
-            train_loss(:obj:`onmt.utils.loss.LossComputeBase`):
-               training loss computation
-            valid_loss(:obj:`onmt.utils.loss.LossComputeBase`):
-               training loss computation
-            optim(:obj:`onmt.utils.optimizers.Optimizer`):
-               the optimizer responsible for update
-            trunc_size(int): length of truncated back propagation through time
-            shard_size(int): compute loss in shards of this size for efficiency
-            data_type(string): type of the source input: [text|img|audio]
-            norm_method(string): normalization methods: [sents|tokens]
-            grad_accum_count(int): accumulate gradients this many times.
-            report_manager(:obj:`onmt.utils.ReportMgrBase`):
-                the object that creates reports, or None
-            model_saver(:obj:`onmt.models.ModelSaverBase`): the saver is
-                used to save a checkpoint.
-                Thus nothing will be saved if this parameter is None
+        model (onmt.models.model.NMTModel): translation model
+            to train
+        train_loss (onmt.utils.loss.LossComputeBase):
+           training loss computation
+        valid_loss (onmt.utils.loss.LossComputeBase):
+           training loss computation
+        optim (onmt.utils.optimizers.Optimizer):
+           the optimizer responsible for update
+        trunc_size (int): length of truncated back propagation through time
+        shard_size (int): compute loss in shards of this size for efficiency
+        data_type (datatypes.Datatype): type of the source input
+        norm_method (string): normalization methods: [sents|tokens]
+        grad_accum_count (int): accumulate gradients this many times.
+        report_manager (onmt.utils.ReportMgrBase):
+            the object that creates reports, or None
+        model_saver (onmt.models.ModelSaverBase): the saver is
+            used to save a checkpoint.
+            Thus nothing will be saved if this parameter is None
     """
 
     def __init__(self, model, train_loss, valid_loss, optim,
@@ -222,9 +223,9 @@ class Trainer(object):
 
             for batch in valid_iter:
                 src = inputters.make_features(batch, 'src', self.data_type)
-                if self.data_type == 'text':
+                if self.data_type is datatypes.text_datatype:
                     _, src_lengths = batch.src
-                elif self.data_type == 'audio':
+                elif self.data_type is datatypes.audio_datatype:
                     src_lengths = batch.src_lengths
                 else:
                     src_lengths = None
@@ -261,10 +262,10 @@ class Trainer(object):
 
             bptt = False
             src = inputters.make_features(batch, 'src', self.data_type)
-            if self.data_type == 'text':
+            if self.data_type is datatypes.text_datatype:
                 _, src_lengths = batch.src
                 report_stats.n_src_words += src_lengths.sum().item()
-            elif self.data_type == 'audio':
+            elif self.data_type is datatypes.audio_datatype:
                 src_lengths = batch.src_lengths
             else:
                 src_lengths = None

@@ -7,6 +7,7 @@ import torch
 
 import onmt
 import onmt.inputters
+import onmt.datatypes
 import onmt.opts
 from onmt.model_builder import build_embeddings, \
     build_encoder, build_decoder
@@ -28,7 +29,10 @@ class TestModel(unittest.TestCase):
         self.opt = opt
 
     def get_field(self):
-        src = onmt.inputters.get_fields("text", 0, 0)["src"][0][1]
+        src_dtype = onmt.datatypes.text_datatype
+        tgt_dtype = onmt.datatypes.text_datatype
+        src = onmt.inputters.get_fields(
+            src_dtype, tgt_dtype, 0, 0)["src"][0][1]
         src.build_vocab([])
         return src
 
