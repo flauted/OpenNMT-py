@@ -56,22 +56,22 @@ class PenaltyBuilder(object):
         """
         return topk_log_probs.clone().fill_(0.0)
 
-    def length_wu(self, curr_len, topk_log_probs, alpha=0.):
+    def length_wu(self, curr_len, alpha=0.):
         """
         NMT length re-ranking score from
         "Google's Neural Machine Translation System" :cite:`wu2016google`.
         """
 
-        return topk_log_probs / (((5 + curr_len) / 6.0) ** alpha)
+        return ((5 + curr_len) / 6.0) ** alpha
 
-    def length_average(self, curr_len, topk_log_probs, alpha=0.):
+    def length_average(self, curr_len, alpha=0.):
         """
         Returns the average probability of tokens in a sequence.
         """
-        return topk_log_probs / curr_len
+        return curr_len
 
-    def length_none(self, curr_len, topk_log_probs, alpha=0.):
+    def length_none(self, curr_len, alpha=0.):
         """
         Returns unmodified scores.
         """
-        return topk_log_probs
+        return 1.0

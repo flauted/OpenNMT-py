@@ -224,9 +224,9 @@ class GNMTGlobalScorer(object):
         """
         Rescores a prediction based on penalty functions
         """
-        normalized_probs = self.length_penalty(curr_len,
-                                               topk_log_probs,
+        len_pen = self.length_penalty(curr_len,
                                                self.alpha)
+        normalized_probs = topk_log_probs / len_pen
         if not stepwise_penalty:
             penalty = self.cov_penalty(topk_log_probs,
                                        cov,
