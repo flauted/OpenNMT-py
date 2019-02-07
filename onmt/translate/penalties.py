@@ -10,6 +10,7 @@ class PenaltyBuilder(object):
         length_pen (str): option name of length pen
         cov_pen (str): option name of cov pen
     """
+
     def __init__(self, cov_pen, length_pen):
         self.length_pen = length_pen
         self.cov_pen = cov_pen
@@ -30,48 +31,41 @@ class PenaltyBuilder(object):
         else:
             return self.length_none
 
-    """
-    Below are all the different penalty terms implemented so far
-    """
+    # Below are all the different penalty terms implemented so far.
+    # Apply cov pen by subtracting from topk log probs.
+    # Divide topk log probs by len pen.
 
     def coverage_wu(self, cov, beta=0.):
+        """GNMT coverage re-ranking penalty.
+
+        See "Google's Neural Machine Translation System" :cite:`wu2016google`.
         """
-        NMT coverage re-ranking score from
-        "Google's Neural Machine Translation System" :cite:`wu2016google`.
-        """
+
         penalty = -torch.min(cov, cov.clone().fill_(1.0)).log().sum(1)
         return beta * penalty
 
     def coverage_summary(self, cov, beta=0.):
-        """
-        Our summary penalty.
-        """
+        """Our summary penalty."""
         penalty = torch.max(cov, cov.clone().fill_(1.0)).sum(1)
         penalty -= cov.size(1)
         return beta * penalty
 
     def coverage_none(self, cov, beta=0.):
-        """
-        returns zero as penalty
-        """
+        """Returns zero as penalty."""
         return 0.0
 
     def length_wu(self, curr_len, alpha=0.):
-        """
-        NMT length re-ranking score from
-        "Google's Neural Machine Translation System" :cite:`wu2016google`.
+        """GNMT length re-ranking score penalty.
+
+        See "Google's Neural Machine Translation System" :cite:`wu2016google`.
         """
 
         return ((5 + curr_len) / 6.0) ** alpha
 
     def length_average(self, curr_len, alpha=0.):
-        """
-        Returns the average probability of tokens in a sequence.
-        """
+        """Returns the current length."""
         return curr_len
 
     def length_none(self, curr_len, alpha=0.):
-        """
-        Returns unmodified scores.
-        """
+        """Returns no score modifier."""
         return 1.0
