@@ -62,6 +62,25 @@ class BeamSearch(object):
         return self.select_indices.view(self.batch_size, self.beam_size)\
             .fmod(self.beam_size)
 
+    def _block_ngram_repeat(self, step, log_probs):
+        # iterate over all batches, over all beams
+        for bk in range(self.alive_seq.shape[0]):
+            hyp = self.alive_seq[bk, 1:]
+            ngrams = set()
+            fail = False
+            gram = []
+            for i in range(step - 1):
+                # Last n tokens, n = block_ngram_repeat
+                gram = (gram + [hyp[i].item()])[-self.block_ngram_repeat:]
+                # skip the blocking if any token in gram is excluded
+                if set(gram) & self.exclusion_tokens:
+                    continue
+                if tuple(gram) in ngrams:
+                    fail = True
+                ngrams.add(tuple(gram))
+            if fail:
+                log_probs[bk] = -10e20
+
     def advance(self, log_probs, attn):
         vocab_size = log_probs.size(-1)
 
@@ -75,28 +94,11 @@ class BeamSearch(object):
 
         # block ngram repeats
         if self.block_ngram_repeat > 0 and step > 1:
-            # iterate over all batches, over all beams
-            for bk in range(self.alive_seq.shape[0]):
-                hyp = self.alive_seq[bk, 1:]
-                ngrams = set()
-                fail = False
-                gram = []
-                for i in range(step - 1):
-                    # Last n tokens, n = block_ngram_repeat
-                    gram = (gram + [hyp[i].item()])[-self.block_ngram_repeat:]
-                    # skip the blocking if any token in gram is excluded
-                    if set(gram) & self.exclusion_tokens:
-                        continue
-                    if tuple(gram) in ngrams:
-                        fail = True
-                    ngrams.add(tuple(gram))
-                if fail:
-                    log_probs[bk] = -10e20
-
-        alpha = self.global_scorer.alpha
-        length_penalty = ((5.0 + (self.alive_seq.shape[1])) / 6.0) ** alpha
+            self._block_ngram_repeat(step, log_probs)
 
         # Flatten probs into a list of possibilities.
+        length_penalty = self.global_scorer.length_penalty(
+            step, alpha=self.global_scorer.alpha)
         curr_scores = log_probs / length_penalty
         curr_scores = curr_scores.reshape(-1, self.beam_size * vocab_size)
         self.topk_scores, self.topk_ids = curr_scores.topk(
@@ -192,3 +194,6 @@ class BeamSearch(object):
             self.alive_attn = attention.index_select(1, non_finished) \
                 .view(self.alive_attn.size(0),
                       -1, self.alive_attn.size(-1))
+
+    def __len__(self):
+        return

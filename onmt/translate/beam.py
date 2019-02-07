@@ -86,7 +86,8 @@ class Beam(object):
         """
         num_words = word_probs.size(1)
         if self.stepwise_penalty:
-            self.global_scorer.update_score(self, attn_out)
+            self.global_scorer.update_score(
+                self.global_state, self.scores, attn_out)
         # force the output to be longer than self.min_length
         cur_len = len(self.next_ys)
         if cur_len < self.min_length:
@@ -137,11 +138,15 @@ class Beam(object):
         self.prev_ks.append(prev_k)
         self.next_ys.append((best_scores_id - prev_k * num_words))
         self.attn.append(attn_out.index_select(0, prev_k))
-        self.global_scorer.update_global_state(self)
+        self.global_scorer.update_global_state(
+            self.global_state, cur_len, self.scores,
+            self.attn, self.current_origin)
 
         for i in range(self.next_ys[-1].size(0)):
             if self.next_ys[-1][i] == self._eos:
-                global_scores = self.global_scorer.score(self, self.scores)
+                global_scores = self.global_scorer.score(
+                    len(self.next_ys), self.scores,
+                    self.global_state["coverage"], self.stepwise_penalty)
                 s = global_scores[i]
                 self.finished.append((s, len(self.next_ys) - 1, i))
 
@@ -159,7 +164,9 @@ class Beam(object):
             i = 0
             # Add from beam until we have minimum outputs.
             while len(self.finished) < minimum:
-                global_scores = self.global_scorer.score(self, self.scores)
+                global_scores = self.global_scorer.score(
+                    len(self.next_ys), self.scores,
+                    self.global_state["coverage"], self.stepwise_penalty)
                 s = global_scores[i]
                 self.finished.append((s, len(self.next_ys) - 1, i))
                 i += 1
@@ -180,6 +187,9 @@ class Beam(object):
             k = self.prev_ks[j][k]
         return hyp[::-1], torch.stack(attn[::-1])
 
+    def __len__(self):
+        return len(self.next_ys)
+
 
 class GNMTGlobalScorer(object):
     """
@@ -191,55 +201,60 @@ class GNMTGlobalScorer(object):
        beta (float):  coverage parameter
     """
 
-    def __init__(self, opt):
-        self.alpha = opt.alpha
-        self.beta = opt.beta
-        penalty_builder = penalties.PenaltyBuilder(opt.coverage_penalty,
-                                                   opt.length_penalty)
+    @classmethod
+    def from_opt(cls, opt):
+        return cls(
+            opt.alpha,
+            opt.beta,
+            opt.coverage_penalty,
+            opt.length_penalty
+        )
+
+    def __init__(self, alpha, beta, coverage_penalty, length_penalty):
+        self.alpha = alpha
+        self.beta = beta
+        penalty_builder = penalties.PenaltyBuilder(coverage_penalty,
+                                                   length_penalty)
         # Term will be subtracted from probability
         self.cov_penalty = penalty_builder.coverage_penalty()
         # Probability will be divided by this
         self.length_penalty = penalty_builder.length_penalty()
 
-    def score(self, beam, logprobs):
+    def score(self, curr_len, topk_log_probs, cov, stepwise_penalty):
         """
         Rescores a prediction based on penalty functions
         """
-        normalized_probs = self.length_penalty(beam,
-                                               logprobs,
-                                               self.alpha)
-        if not beam.stepwise_penalty:
-            penalty = self.cov_penalty(beam,
-                                       beam.global_state["coverage"],
-                                       self.beta)
+        len_pen = self.length_penalty(curr_len, self.alpha)
+        normalized_probs = topk_log_probs / len_pen
+        if not stepwise_penalty:
+            penalty = self.cov_penalty(cov, self.beta)
             normalized_probs -= penalty
 
         return normalized_probs
 
-    def update_score(self, beam, attn):
+    def update_score(self, global_state, topk_log_probs, attn):
         """
         Function to update scores of a Beam that is not finished
         """
-        if "prev_penalty" in beam.global_state.keys():
-            beam.scores.add_(beam.global_state["prev_penalty"])
-            penalty = self.cov_penalty(beam,
-                                       beam.global_state["coverage"] + attn,
+        if "prev_penalty" in global_state.keys():
+            topk_log_probs.add_(global_state["prev_penalty"])
+            penalty = self.cov_penalty(global_state["coverage"] + attn,
                                        self.beta)
-            beam.scores.sub_(penalty)
+            topk_log_probs.sub_(penalty)
 
-    def update_global_state(self, beam):
+    def update_global_state(self, global_state, curr_len, topk_log_probs,
+                            attn, current_origin):
         "Keeps the coverage vector as sum of attentions"
-        if len(beam.prev_ks) == 1:
-            beam.global_state["prev_penalty"] = beam.scores.clone().fill_(0.0)
-            beam.global_state["coverage"] = beam.attn[-1]
-            self.cov_total = beam.attn[-1].sum(1)
+        if curr_len == 1:
+            global_state["prev_penalty"] = topk_log_probs.clone().fill_(0.0)
+            global_state["coverage"] = attn[-1]
+            self.cov_total = attn[-1].sum(1)
         else:
-            self.cov_total += torch.min(beam.attn[-1],
-                                        beam.global_state['coverage']).sum(1)
-            beam.global_state["coverage"] = beam.global_state["coverage"] \
-                .index_select(0, beam.prev_ks[-1]).add(beam.attn[-1])
+            self.cov_total += torch.min(attn[-1],
+                                        global_state['coverage']).sum(1)
+            global_state["coverage"] = global_state["coverage"] \
+                .index_select(0, current_origin).add(attn[-1])
 
-            prev_penalty = self.cov_penalty(beam,
-                                            beam.global_state["coverage"],
+            prev_penalty = self.cov_penalty(global_state["coverage"],
                                             self.beta)
-            beam.global_state["prev_penalty"] = prev_penalty
+            global_state["prev_penalty"] = prev_penalty
