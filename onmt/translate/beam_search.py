@@ -81,11 +81,6 @@ class BeamSearch(object):
             if fail:
                 log_probs[bk] = -10e20
 
-    def _calculate_length_penalty(self):
-        alpha = self.global_scorer.alpha
-        length_penalty = ((5.0 + (self.alive_seq.shape[1])) / 6.0) ** alpha
-        return length_penalty
-
     def advance(self, log_probs, attn):
         vocab_size = log_probs.size(-1)
 
@@ -102,7 +97,8 @@ class BeamSearch(object):
             self._block_ngram_repeat(step, log_probs)
 
         # Flatten probs into a list of possibilities.
-        length_penalty = self._calculate_length_penalty()
+        length_penalty = self.global_scorer.length_penalty(
+            step, alpha=self.global_scorer.alpha)
         curr_scores = log_probs / length_penalty
         curr_scores = curr_scores.reshape(-1, self.beam_size * vocab_size)
         self.topk_scores, self.topk_ids = curr_scores.topk(
