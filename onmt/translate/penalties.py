@@ -34,7 +34,7 @@ class PenaltyBuilder(object):
     Below are all the different penalty terms implemented so far
     """
 
-    def coverage_wu(self, topk_log_probs, cov, beta=0.):
+    def coverage_wu(self, cov, beta=0.):
         """
         NMT coverage re-ranking score from
         "Google's Neural Machine Translation System" :cite:`wu2016google`.
@@ -42,7 +42,7 @@ class PenaltyBuilder(object):
         penalty = -torch.min(cov, cov.clone().fill_(1.0)).log().sum(1)
         return beta * penalty
 
-    def coverage_summary(self, topk_log_probs, cov, beta=0.):
+    def coverage_summary(self, cov, beta=0.):
         """
         Our summary penalty.
         """
@@ -50,11 +50,11 @@ class PenaltyBuilder(object):
         penalty -= cov.size(1)
         return beta * penalty
 
-    def coverage_none(self, topk_log_probs, cov, beta=0.):
+    def coverage_none(self, cov, beta=0.):
         """
         returns zero as penalty
         """
-        return topk_log_probs.clone().fill_(0.0)
+        return 0.0
 
     def length_wu(self, curr_len, alpha=0.):
         """

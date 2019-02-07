@@ -224,13 +224,10 @@ class GNMTGlobalScorer(object):
         """
         Rescores a prediction based on penalty functions
         """
-        len_pen = self.length_penalty(curr_len,
-                                               self.alpha)
+        len_pen = self.length_penalty(curr_len, self.alpha)
         normalized_probs = topk_log_probs / len_pen
         if not stepwise_penalty:
-            penalty = self.cov_penalty(topk_log_probs,
-                                       cov,
-                                       self.beta)
+            penalty = self.cov_penalty(cov, self.beta)
             normalized_probs -= penalty
 
         return normalized_probs
@@ -241,8 +238,7 @@ class GNMTGlobalScorer(object):
         """
         if "prev_penalty" in global_state.keys():
             topk_log_probs.add_(global_state["prev_penalty"])
-            penalty = self.cov_penalty(topk_log_probs,
-                                       global_state["coverage"] + attn,
+            penalty = self.cov_penalty(global_state["coverage"] + attn,
                                        self.beta)
             topk_log_probs.sub_(penalty)
 
@@ -259,7 +255,6 @@ class GNMTGlobalScorer(object):
             global_state["coverage"] = global_state["coverage"] \
                 .index_select(0, current_origin).add(attn[-1])
 
-            prev_penalty = self.cov_penalty(topk_log_probs,
-                                            global_state["coverage"],
+            prev_penalty = self.cov_penalty(global_state["coverage"],
                                             self.beta)
             global_state["prev_penalty"] = prev_penalty
