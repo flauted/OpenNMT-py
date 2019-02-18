@@ -49,8 +49,8 @@ class ImageDataReader(DataReaderBase):
 
         Args:
             images (str or Iterable[str]): Sequence of image paths or
-                path to file containing audio paths.
-                In either case, the filenames may be relative to ``src_dir``
+                path to file containing image paths.
+                In either case, the filenames may be relative to ``img_dir``
                 (default behavior) or absolute.
             side (str): Prefix used in return dict. Usually
                 ``"src"`` or ``"tgt"``.

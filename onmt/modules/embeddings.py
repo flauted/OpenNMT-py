@@ -8,6 +8,25 @@ import torch.nn as nn
 from onmt.modules.util_class import Elementwise
 
 
+class VecEmbedding(nn.Module):
+    # Very rough vector embeddings.
+    # Usually, you want feature vectors to be projected down to a more
+    # manageable size. This does that. It assumes you don't have multiple
+    # feature vectors (like C3D and CNN) right now, and it
+    # doesn't have a pass-through option to send CNN feature vectors
+    # straight into the sequence model.
+    def __init__(self, vec_size, emb_dim):
+        super(VecEmbedding, self).__init__()
+        self.embedding_size = emb_dim
+        self.proj = nn.Linear(vec_size, emb_dim, bias=False)
+
+    def forward(self, x):
+        return self.proj(x).squeeze(2)
+
+    def load_pretrained_vectors(self, file):
+        assert not file
+
+
 class PositionalEncoding(nn.Module):
     """Sinusoidal positional encoding for non-recurrent neural networks.
 
