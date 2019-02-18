@@ -96,7 +96,7 @@ Preprocess the data with
 
 .. code-block:: bash
 
-    python preprocess.py -data_type vec -train_src /data/sd0/here/yt2t_2/yt2t_train_files.txt -src_dir /data/sd0/here/yt2t_2/r152/ -train_tgt /data/sd0/here/yt2t_2/yt2t_train_cap.txt -valid_src /data/sd0/here/yt2t_2/yt2t_val_files.txt -valid_tgt /data/sd0/here/yt2t_2/yt2t_val_cap.txt -save_data data/yt2t --shard_size 1000
+    python preprocess.py -data_type vec -train_src yt2t/yt2t_train_files.txt -src_dir yt2t/r152/ -train_tgt yt2t/yt2t_train_cap.txt -valid_src yt2t/yt2t_val_files.txt -valid_tgt yt2t/yt2t_val_cap.txt -save_data data/yt2t --shard_size 1000
 
 Train with
 

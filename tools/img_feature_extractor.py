@@ -218,7 +218,7 @@ if __name__ == "__main__":
     if not os.path.exists(out_path):
         os.makedirs(out_path)
 
-    # mp queue's don't work well between procs unless they're from a manager
+    # mp queues don't work well between procs unless they're from a manager
     manager = Manager()
     finished_queue = manager.Queue()
 
