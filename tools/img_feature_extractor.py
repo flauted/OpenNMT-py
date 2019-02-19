@@ -137,7 +137,11 @@ class Reconstructor(object):
                         [self.feats, these_finished_seq_feats], 0)
                 else:
                     all_last_seq_feats = these_finished_seq_feats
-                save_path, vid_id = self.name(paths[i-1])
+                if i - 1 < 0:
+                    name = self.path
+                else:
+                    name = paths[i-1]
+                save_path, vid_id = self.name(name)
                 self.save(save_path, all_last_seq_feats)
                 n_feats = all_last_seq_feats.shape[0]
                 self.finished_queue.put((vid_id, n_feats))
@@ -196,6 +200,7 @@ def run(device_id, world_size, root_dir, out_path, batch_size_per_device,
             paths, idxs, images = samp
             images = images.to(dev)
             feats = fe(images).to("cpu")
+            print(paths[0], feats[0, 0, 0])
             rc.push(paths, idxs, feats)
     rc.flush()
     finished_queue.put(FINISHED)
@@ -214,7 +219,7 @@ if __name__ == "__main__":
 
     batch_size_per_device = opt.batch_size_per_device
     root_dir = opt.root_dir
-    out_path = opt.out_path
+    out_path = opt.out_dir
     if not os.path.exists(out_path):
         os.makedirs(out_path)
 
@@ -230,7 +235,7 @@ if __name__ == "__main__":
     print("Starting processing. Progress bar startup can take some time, but "
           "processing will start in the meantime.")
 
-    files = list(os.listdir(root_dir))
+    files = list(sorted(list(os.listdir(root_dir))))
     files = [f for f in files
              if os.path.basename(Reconstructor.name_(f, out_path)[0])
              not in os.listdir(out_path)]

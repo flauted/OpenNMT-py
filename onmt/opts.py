@@ -537,7 +537,8 @@ def translate_opts(parser):
 
     group = parser.add_argument_group('Data')
     group.add('--data_type', '-data_type', default="text",
-              help="Type of the source input. Options: [text|img].")
+              help="Type of the source input. "
+                   "Options: [text|img|audio|vec].")
 
     group.add('--src', '-src', required=True,
               help="Source sequence to decode (one line per "
@@ -668,6 +669,10 @@ def translate_opts(parser):
               type=int, default=3, choices=[3, 1],
               help="Using grayscale image can training "
                    "model faster and smaller")
+
+    # options most relevant to vec input
+    group.add('--every_nth_vec', '-every_nth_vec', type=int, default=16,
+              help="Subsample every nth vector, appending the final vector.")
 
 
 # Copyright 2016 The Chromium Authors. All rights reserved.
