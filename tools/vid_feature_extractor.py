@@ -10,6 +10,10 @@ import torch.nn as nn
 from PIL import Image
 import pretrainedmodels
 from pretrainedmodels.utils import TransformImage
+try:
+    from src.i3dpt import I3D
+except ImportError:
+    I3D = None
 
 
 FINISHED = "finished"  # end-of-queue
@@ -26,6 +30,22 @@ def read_to_imgs(file):
         success, image = vidcap.read()
 
 
+# TODO: Expose nframes
+def read_to_vids(file, cols, rows, nframes=16):
+    """Yields a video."""
+    vidcap = cv2.VideoCapture(file)
+    success, image = vidcap.read()
+    frames = []
+    ct = 0
+    while success:
+        if ct % nframes == 0:
+            image = cv2.resize(image, (cols, rows))
+            frames.append(image)
+        success, image = vidcap.read()
+        ct += 1
+    return np.stack(frames, 0), None
+
+
 def vid_len(path):
     """Return the length of a video."""
     return int(cv2.VideoCapture(path).get(cv2.CAP_PROP_FRAME_COUNT))
@@ -33,11 +53,17 @@ def vid_len(path):
 
 class VidDset(object):
     """For each video, yield its frames."""
-    def __init__(self, model, root_dir, filenames):
+    def __init__(self, model, root_dir, filenames, model_type="cnn"):
         self.root_dir = root_dir
         self.filenames = filenames
         self.paths = [os.path.join(self.root_dir, f) for f in self.filenames]
-        self.xform = TransformImage(model)
+        self.return_vids = model_type == "i3d" or model_type == "none"
+        if model_type == "cnn":
+            self.xform = TransformImage(model)
+        elif model_type == "i3d":
+            self.xform = lambda x: torch.from_numpy(x).permute(3, 0, 1, 2)
+        else:
+            self.xform = lambda x: torch.from_numpy(x).permute(3, 0, 1, 2)
 
         self.current = 0
 
@@ -46,8 +72,12 @@ class VidDset(object):
 
     def __getitem__(self, i):
         path = self.paths[i]
-        for img, idx in read_to_imgs(path):
-            yield path, idx, self.xform(Image.fromarray(img))
+        if self.return_vids:
+            return [(path, _, self.xform(vid))
+                    for vid, _ in [read_to_vids(path, 224, 224)]]
+        else:
+            return ((path, idx, self.xform(Image.fromarray(img)))
+                    for img, idx in read_to_imgs(path))
 
     def __iter__(self):
         return self
@@ -63,6 +93,21 @@ class VidDset(object):
         return self.next()
 
 
+def collate_tensor(batch, return_vids):
+    if return_vids:
+        # pad the videos
+        vids = batch[-1]
+        max_len = max(v.shape[1] for v in vids)
+        bsz = len(batch[-1])
+        c, _, x, y = batch[-1][0].shape
+        vid = torch.zeros((bsz, c, max_len, x, y), dtype=torch.uint8)
+        for i, v in enumerate(vids):
+            vid[i, :, :v.shape[1], :, :] = v
+        batch[-1] = vid
+    else:
+        batch[-1] = torch.stack(batch[-1], 0)
+
+
 def batch(dset, batch_size):
     """Collate frames into batches of equal length."""
     batch = [[], [], []]
@@ -70,7 +115,7 @@ def batch(dset, batch_size):
     for seq in dset:
         for path, idx, img in seq:
             if batch_ct == batch_size:
-                batch[-1] = torch.stack(batch[-1], 0)
+                collate_tensor(batch, dset.return_vids)
                 yield batch
                 batch = [[], [], []]
                 batch_ct = 0
@@ -79,7 +124,7 @@ def batch(dset, batch_size):
             batch[2].append(img)
             batch_ct += 1
     if batch_ct != 0:
-        batch[-1] = torch.stack(batch[-1], 0)
+        collate_tensor(batch, dset.return_vids)
         yield batch
 
 
@@ -93,6 +138,92 @@ class FeatureExtractor(nn.Module):
     def forward(self, x):
         return self.model.avgpool(
             self.model.features(x)).view(-1, 1, self.FEAT_SIZE)
+
+
+class I3DFE(I3D):
+    def forward(self, inp):
+        # Preprocessing
+        returns = []
+        out = self.conv3d_1a_7x7(inp)
+        out = self.maxPool3d_2a_3x3(out)
+        returns.append(out)
+        out = self.conv3d_2b_1x1(out)
+        out = self.conv3d_2c_3x3(out)
+        out = self.maxPool3d_3a_3x3(out)
+        returns.append(out)
+        out = self.mixed_3b(out)
+        out = self.mixed_3c(out)
+        out = self.maxPool3d_4a_3x3(out)
+        returns.append(out)
+        out = self.mixed_4b(out)
+        out = self.mixed_4c(out)
+        out = self.mixed_4d(out)
+        out = self.mixed_4e(out)
+        out = self.mixed_4f(out)
+        out = self.maxPool3d_5a_2x2(out)
+        returns.append(out)
+        out = self.mixed_5b(out)
+        out = self.mixed_5c(out)
+        out = self.avg_pool(out)
+        out = self.dropout(out)
+        # putting the mean before conv3d gives the same output on the
+        # I3D demo, so it would seem this is commutative with the conv3d
+        out = out.mean(-1, keepdim=True)
+        out = self.conv3d_0c_1x1(out)
+        returns.append(out)
+        return returns
+
+
+class I3DFeatureExtractor(nn.Module):
+    """Extract feature maps from a batch of videos."""
+    def __init__(self):
+        super(I3DFeatureExtractor, self).__init__()
+        # TODO: Expose flow
+        self.model = I3DFE(num_classes=400, modality="rgb")
+        # TODO: Expose this path!
+        self.model.load_state_dict(
+            torch.load("../../kinetics_i3d_pytorch/model/model_rgb.pth")
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+
+class VidSaver(object):
+    def __init__(self, out_path, finished_queue):
+        self.out_path = out_path
+        self.finished_queue = finished_queue
+
+    def save(self, path, feats):
+        torch.save(feats, path)
+
+    def push(self, paths, idxs, feats):
+        for path_b, vid_b in zip(paths, feats):
+            save_path, vid_id = Reconstructor.name_(path_b, self.out_path)
+            self.save(save_path, vid_b)
+            self.finished_queue.put((vid_id, vid_len(path_b)))
+
+    def flush(self):
+        pass
+
+
+class I3DSaver(object):
+    def __init__(self, out_path, finished_queue):
+        self.out_path = out_path
+        self.finished_queue = finished_queue
+
+    def save(self, path, feats):
+        torch.save(feats, path)
+
+    def push(self, paths, idxs, feats):
+        for b, path_b in enumerate(paths):
+            save_path, vid_id = Reconstructor.name_(path_b, self.out_path)
+            feats_b = [f[b] for f in feats]
+            self.save(save_path, feats_b)
+            self.finished_queue.put((vid_id, vid_len(path_b)))
+
+    def flush(self):
+        pass
 
 
 class Reconstructor(object):
@@ -180,17 +311,31 @@ def finished_watcher(finished_queue, world_size, root_dir, files):
                 pbar.update(n_these_frames)
 
 
-def run(device_id, world_size, root_dir, out_path, batch_size_per_device,
-        finished_queue, files):
+class VidFeatureExtractor(object):
+    model = None
+
+
+def run(device_id, world_size, root_dir, batch_size_per_device,
+        feats_queue, files, model_type="cnn"):
     """Process a disjoint subset of the videos on each device."""
     if world_size > 1:
         these_files = [f for i, f in enumerate(files)
                        if i % world_size == device_id]
     else:
         these_files = files
-    fe = FeatureExtractor()
-    dset = VidDset(fe.model, root_dir, these_files)
-    rc = Reconstructor(out_path, finished_queue)
+    if model_type == "cnn":
+        fe = FeatureExtractor()
+    elif model_type == "i3d":
+        fe = I3DFeatureExtractor()
+    else:
+        fe = VidFeatureExtractor()
+    dset = VidDset(fe.model, root_dir, these_files, model_type=model_type)
+    if model_type == "none":
+        for samp in batch(dset, batch_size_per_device):
+            paths, idxs, images = samp
+            feats_queue.put((paths, idxs, images))
+        feats_queue.put(FINISHED)
+        return
     dev = torch.device("cuda", device_id) \
         if device_id >= 0 else torch.device("cpu")
     fe.to(dev)
@@ -199,11 +344,32 @@ def run(device_id, world_size, root_dir, out_path, batch_size_per_device,
         for samp in batch(dset, batch_size_per_device):
             paths, idxs, images = samp
             images = images.to(dev)
-            feats = fe(images).to("cpu")
-            print(paths[0], feats[0, 0, 0])
+            feats = fe(images)
+            if torch.is_tensor(feats):
+                feats = feats.to("cpu")
+            else:
+                feats = [f.to("cpu") for f in feats]
+            feats_queue.put((paths, idxs, feats))
+    feats_queue.put(FINISHED)
+    return
+
+
+def saver(out_path, model_type, feats_queue, finished_queue):
+    if model_type == "cnn":
+        rc = Reconstructor(out_path, finished_queue)
+    elif model_type == "i3d":
+        rc = I3DSaver(out_path, finished_queue)
+    else:
+        rc = VidSaver(out_path, finished_queue)
+    while True:
+        item = feats_queue.get()
+        if item == FINISHED:
+            rc.flush()
+            finished_queue.put(FINISHED)
+            return
+        else:
+            paths, idxs, feats = item
             rc.push(paths, idxs, feats)
-    rc.flush()
-    finished_queue.put(FINISHED)
 
 
 if __name__ == "__main__":
@@ -215,6 +381,8 @@ if __name__ == "__main__":
     parser.add_argument("--world_size", type=int, default=1,
                         help="Number of devices to run on.")
     parser.add_argument("--batch_size_per_device", type=int, default=512)
+    parser.add_argument("--model_type", type=str,
+                        choices=["cnn", "i3d", "none"])
     opt = parser.parse_args()
 
     batch_size_per_device = opt.batch_size_per_device
@@ -243,32 +411,41 @@ if __name__ == "__main__":
     procs.append(mp.Process(
         target=finished_watcher,
         args=(finished_queue, world_size, root_dir, files),
-        daemon=True
+        daemon=False
     ))
     procs[0].start()
 
-    if world_size > 1:
-        for device_id in range(world_size):
+    if world_size >= 1:
+        feat_queues = [manager.Queue(2) for _ in range(world_size)]
+        for feats_queue, device_id in zip(feat_queues, range(world_size)):
+            # each device has its own saver so that reconstructing is easier
+            # mgr = Manager()
             procs.append(mp.Process(
                 target=run,
-                args=(device_id, world_size, root_dir, out_path,
-                      batch_size_per_device, finished_queue, files),
+                args=(device_id, world_size, root_dir,
+                      batch_size_per_device, feats_queue, files,
+                      opt.model_type),
                 daemon=True))
-            procs[device_id + 1].start()
-    elif world_size == 1:
-        procs.append(mp.Process(
-            target=run,
-            args=(0, 1, root_dir, out_path,
-                  batch_size_per_device, finished_queue, files),
-            daemon=True))
-        procs[1].start()
+            procs[-1].start()
+            procs.append(mp.Process(
+                target=saver,
+                args=(out_path, opt.model_type, feats_queue, finished_queue),
+                daemon=True))
+            procs[-1].start()
     else:
+        feats_queue = manager.Queue()
         procs.append(mp.Process(
             target=run,
-            args=(-1, 1, root_dir, out_path,
-                  batch_size_per_device, finished_queue, files),
+            args=(-1, 1, root_dir,
+                  batch_size_per_device, feats_queue, files,
+                  opt.model_type),
             daemon=True))
-        procs[1].start()
+        procs[-1].start()
+        procs.append(mp.Process(
+            target=saver,
+            args=(out_path, opt.model_type, feats_queue, finished_queue),
+            daemon=True))
+        procs[-1].start()
 
     for p in procs:
         p.join()

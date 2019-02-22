@@ -8,6 +8,17 @@ import torch.nn as nn
 from onmt.modules.util_class import Elementwise
 
 
+class VidEmbedding(nn.Module):
+    def __init__(self):
+        super(VidEmbedding, self).__init__()
+
+    def forward(self, x):
+        return x
+
+    def load_pretrained_vectors(self, file):
+        assert not file
+
+
 class VecEmbedding(nn.Module):
     # Very rough vector embeddings.
     # Usually, you want feature vectors to be projected down to a more

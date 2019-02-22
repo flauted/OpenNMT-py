@@ -13,7 +13,7 @@ from onmt.encoders import str2enc
 
 from onmt.decoders import str2dec
 
-from onmt.modules import Embeddings, CopyGenerator, VecEmbedding
+from onmt.modules import Embeddings, CopyGenerator, VecEmbedding, VidEmbedding
 from onmt.modules.util_class import Cast
 from onmt.utils.misc import use_gpu
 from onmt.utils.logging import logger
@@ -32,6 +32,8 @@ def build_embeddings(opt, text_field, for_encoder=True):
 
     if opt.model_type == "vec" and for_encoder:
         return VecEmbedding(opt.feat_vec_size, emb_dim)
+    elif opt.model_type == "vid" and for_encoder:
+        return VidEmbedding()
 
     pad_indices = [f.vocab.stoi[f.pad_token] for _, f in text_field]
     word_padding_idx, feat_pad_indices = pad_indices[0], pad_indices[1:]
@@ -67,7 +69,8 @@ def build_encoder(opt, embeddings):
         embeddings (Embeddings): vocab embeddings for this encoder.
     """
     enc_type = opt.encoder_type if opt.model_type == "text" \
-        or opt.model_type == "vec" else opt.model_type
+        or opt.model_type == "vec"or opt.model_type == "vid" \
+        else opt.model_type
     return str2enc[enc_type].from_opt(opt, embeddings)
 
 
@@ -128,7 +131,8 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None, gpu_id=None):
     """
 
     # Build embeddings.
-    if model_opt.model_type == "text" or model_opt.model_type == "vec":
+    if model_opt.model_type == "text" or model_opt.model_type == "vec" or\
+            model_opt.model_type == "vid":
         src_field = fields["src"]
         src_emb = build_embeddings(model_opt, src_field)
     else:

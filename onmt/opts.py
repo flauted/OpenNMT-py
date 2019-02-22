@@ -60,24 +60,24 @@ def model_opts(parser):
     # Encoder-Decoder Options
     group = parser.add_argument_group('Model- Encoder-Decoder')
     group.add('--model_type', '-model_type', default='text',
-              choices=['text', 'img', 'audio', 'vec'],
+              choices=['text', 'img', 'audio', 'vec', "vid"],
               help="Type of source model to use. Allows "
                    "the system to incorporate non-text inputs. "
-                   "Options are [text|img|audio|vec].")
+                   "Options are [text|img|audio|vid|vec].")
     group.add('--model_dtype', '-model_dtype', default='fp32',
               choices=['fp32', 'fp16'],
               help='Data type of the model.')
 
     group.add('--encoder_type', '-encoder_type', type=str, default='rnn',
-              choices=['rnn', 'brnn', 'mean', 'transformer', 'cnn'],
+              choices=['rnn', 'brnn', 'mean', 'transformer', 'cnn', 'dualafr'],
               help="Type of encoder layer to use. Non-RNN layers "
                    "are experimental. Options are "
-                   "[rnn|brnn|mean|transformer|cnn].")
+                   "[rnn|brnn|mean|transformer|cnn|dualafr].")
     group.add('--decoder_type', '-decoder_type', type=str, default='rnn',
-              choices=['rnn', 'transformer', 'cnn'],
+              choices=['rnn', 'transformer', 'cnn', 'dualafr'],
               help="Type of decoder layer to use. Non-RNN layers "
                    "are experimental. Options are "
-                   "[rnn|transformer|cnn].")
+                   "[rnn|transformer|cnn|dualafr].")
 
     group.add('--layers', '-layers', type=int, default=-1,
               help='Number of layers in enc/dec.')
@@ -181,7 +181,7 @@ def preprocess_opts(parser):
     group = parser.add_argument_group('Data')
     group.add('--data_type', '-data_type', default="text",
               help="Type of the source input. "
-                   "Options are [text|img|audio|vecs].")
+                   "Options are [text|img|audio|vid|vec].")
 
     group.add('--train_src', '-train_src', required=True,
               help="Path to the training source data")
@@ -538,7 +538,7 @@ def translate_opts(parser):
     group = parser.add_argument_group('Data')
     group.add('--data_type', '-data_type', default="text",
               help="Type of the source input. "
-                   "Options: [text|img|audio|vec].")
+                   "Options: [text|img|audio|vid|vec].")
 
     group.add('--src', '-src', required=True,
               help="Source sequence to decode (one line per "
