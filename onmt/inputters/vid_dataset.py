@@ -7,8 +7,12 @@ from onmt.inputters.datareader_base import DataReaderBase
 
 try:
     import numpy as np
+    import cv2
+    import torchvision
 except ImportError:
     np = None
+    cv2 = None
+    torchvision = None
 
 
 class VidDataReader(DataReaderBase):
@@ -59,13 +63,13 @@ class VidDataReader(DataReaderBase):
             assert os.path.exists(vid_path), \
                 'vid path %s not found' % filename
 
-            vid = torch.load(vid_path)
-            yield {side: vid, side + "_path": filename, "indices": i}
+            # vid = torch.load(vid_path)
+            yield {side: vid_path, side + "_path": filename, "indices": i}
 
 
 def vid_sort_key(ex):
     """Sort using the length of the vector sequence."""
-    return ex.src.shape[2]
+    return torch.load(ex.src[0])[3].shape[1]
 
 
 class VidSeqField(Field):
@@ -86,6 +90,9 @@ class VidSeqField(Field):
             pad_first=False, truncate_first=False, stop_words=None,
             is_target=is_target
         )
+        self.xform = torchvision.transforms.ToTensor()
+        self.means_2 = torch.load("/data/sd0/here/yt2t_2//means_2.pth")
+        self.stds_2 = torch.load("/data/sd0/here/yt2t_2/stds_2.pth")
 
     def pad(self, minibatch):
         """Pad a batch of examples to the length of the longest example.
@@ -106,17 +113,36 @@ class VidSeqField(Field):
         assert not self.pad_first and not self.truncate_first \
             and not self.fix_length and self.sequential
         minibatch = list(minibatch)
-        lengths = [x.size(1) for x in minibatch]
-        max_len = max(lengths)
-        nfeats, _, x, y = minibatch[0].shape
-        feats = torch.full((len(minibatch), nfeats, max_len, x, y),
-                           self.pad_token)
-        for i, (feat, len_) in enumerate(zip(minibatch, lengths)):
-            feat = 2 * (feat.float() / 255) - 1
-            feats[i, :, 0:len_, :, :] = feat
+        feats = [torch.load(p[0]) for p in minibatch]
+        nL = len(feats[0])
+        # process the non-vector features (i.e. the feature maps)
+        lens_per_layer = [
+            [feat[i].shape[1] for feat in feats]
+            for i in range(nL - 1)
+        ]
+        max_l_per_layer = [max(ls) for ls in lens_per_layer]
+        padded_feats = []
+        bsz = len(minibatch)
+        for layer_l in range(nL - 1):
+            feats_l = [feat[layer_l] for feat in feats]
+            nc, _, nx, ny = feats_l[0].shape
+            padded = torch.zeros(
+                (bsz, nc, max_l_per_layer[layer_l], nx, ny),
+                dtype=torch.float32
+            )
+            for i, (feat, len_) in enumerate(
+                    zip(feats_l, lens_per_layer[layer_l])):
+                padded[i, :, :len_, :, :] = feat
+            padded_feats.append(padded)
+
+        feats_f = [feat[nL-1] for feat in feats]
+        padded_feats.append(torch.stack(feats_f, 0))
+
+        padded_feats[2] = (padded_feats[2] - self.means_2) / self.stds_2
+
         if self.include_lengths:
-            return (feats, lengths)
-        return feats
+            return (padded_feats, lens_per_layer)
+        return padded_feats
 
     def numericalize(self, arr, device=None):
         """Turn a batch of examples that use this field into a Variable.
@@ -139,16 +165,18 @@ class VidSeqField(Field):
                              "(data batch, batch lengths).")
         if isinstance(arr, tuple):
             arr, lengths = arr
-            lengths = torch.tensor(lengths, dtype=torch.int, device=device)
-        arr = arr.to(device)
+            lengths = torch.tensor(lengths, dtype=torch.int, device=device)\
+                .transpose(0, 1)
+        # arr = arr.to(device)
+        arr = [a.to(device) for a in arr]
 
         if self.postprocessing is not None:
             arr = self.postprocessing(arr, None)
 
-        if self.sequential and self.batch_first:
-            arr = arr.transpose(0, 1)
+        if self.sequential and self.batch_first:  # this is wrong
+            arr = [a.transpose(0, 1) for a in arr]
         if self.sequential:
-            arr = arr.contiguous()
+            arr = [a.contiguous() for a in arr]
 
         if self.include_lengths:
             return arr, lengths

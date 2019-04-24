@@ -6,6 +6,7 @@ import os
 import math
 import time
 from itertools import count
+from copy import deepcopy
 
 import torch
 
@@ -611,6 +612,9 @@ class Translator(object):
         if isinstance(memory_bank, tuple):
             memory_bank = tuple(tile(x, beam_size, dim=1) for x in memory_bank)
             mb_device = memory_bank[0].device
+        elif isinstance(memory_bank, list):
+            memory_bank = [tile(x, beam_size, dim=0) for x in memory_bank]
+            mb_device = memory_bank[0].device
         else:
             memory_bank = tile(memory_bank, beam_size, dim=1)
             mb_device = memory_bank.device
@@ -637,6 +641,8 @@ class Translator(object):
         for step in range(max_length):
             decoder_input = beam.current_predictions.view(1, -1, 1)
 
+            # print(memory_bank[0][0:5, 0, 0, 0, 0])
+
             log_probs, attn = self._decode_and_generate(
                 decoder_input,
                 memory_bank,
@@ -646,6 +652,8 @@ class Translator(object):
                 src_map=src_map,
                 step=step,
                 batch_offset=beam._batch_offset)
+
+            # print("P:", log_probs)
 
             beam.advance(log_probs, attn)
             any_beam_is_finished = beam.is_finished.any()
@@ -661,6 +669,10 @@ class Translator(object):
                 if isinstance(memory_bank, tuple):
                     memory_bank = tuple(x.index_select(1, select_indices)
                                         for x in memory_bank)
+                elif isinstance(memory_bank, list):
+                    memory_bank = [x.index_select(0, select_indices)
+                                   for x in memory_bank]
+                    # pass
                 else:
                     memory_bank = memory_bank.index_select(1, select_indices)
 

@@ -151,7 +151,7 @@ def model_opts(parser):
     group.add('--transformer_ff', '-transformer_ff', type=int, default=2048,
               help='Size of hidden transformer feed-forward')
 
-    # Generator and loss options.
+    # :wq and loss options.
     group.add('--copy_attn', '-copy_attn', action="store_true",
               help='Train copy attention layer.')
     group.add('--generator_function', '-generator_function', default="softmax",

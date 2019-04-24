@@ -6,8 +6,17 @@ import sys
 import numpy as np
 import argparse
 import torch
+import tqdm
 from onmt.utils.logging import init_logger, logger
 from onmt.inputters.inputter import _old_style_vocab
+
+
+class DummyVocab(object):
+    def __init__(self):
+        self.stoi = {}
+
+    def __len__(self):
+        return len(self.stoi)
 
 
 def get_vocabs(dict_path):
@@ -21,7 +30,10 @@ def get_vocabs(dict_path):
             try:
                 vocab = fields[side].base_field.vocab
             except AttributeError:
-                vocab = fields[side].vocab
+                try:
+                    vocab = fields[side].vocab
+                except AttributeError:
+                    vocab = DummyVocab()
         vocs.append(vocab)
     enc_vocab, dec_vocab = vocs
 
@@ -51,18 +63,69 @@ def read_embeddings(file_enc, skip_lines=0):
     return embs
 
 
+def read_words(file_enc, skip_lines=0):
+    word2line = {}
+    with open(file_enc, 'rb') as f:
+        for i, line in enumerate(f):
+            if i < skip_lines:
+                continue
+            if not line:
+                break
+            if len(line) == 0:
+                continue
+
+            l_split = line.decode("utf8").strip().split(" ")
+            if len(l_split) == 2:
+                continue
+            cur_word = l_split[0]
+            word2line[cur_word] = i
+    return word2line
+
+
+def seq_embedding(file_enc, word, line_num):
+    with open(file_enc, 'rb') as f:
+        for i, line in enumerate(f):
+            if i == line_num:
+                l_split = line.decode("utf8").strip().split(" ")
+                if len(l_split) == 2:
+                    continue
+                cur_word = l_split[0]
+                assert word == cur_word, word + " != " + cur_word
+                return [float(em) for em in l_split[1:]]
+    assert False
+
+
 def match_embeddings(vocab, emb, opt):
-    dim = len(six.next(six.itervalues(emb)))
+    if opt.low_mem:
+        word2line = read_words(
+            emb, 1 if opt.type == "word2vec" else opt.skip_lines)
+        vec = seq_embedding(
+            emb, "the", word2line["the"])
+        dim = len(vec)
+        del vec
+    else:
+        dim = len(six.next(six.itervalues(emb)))
     filtered_embeddings = np.zeros((len(vocab), dim))
     count = {"match": 0, "miss": 0}
-    for w, w_id in vocab.stoi.items():
-        if w in emb:
-            filtered_embeddings[w_id] = emb[w]
+    for w, w_id in tqdm.tqdm(vocab.stoi.items()):
+        if opt.low_mem:
+            if w not in word2line:
+                if opt.verbose:
+                    logger.info(u"not found:\t{}".format(w), file=sys.stderr)
+                count['miss'] += 1
+                continue
+            outp = seq_embedding(
+                emb, w, word2line[w])
+            filtered_embeddings[w_id] = outp
             count['match'] += 1
         else:
-            if opt.verbose:
-                logger.info(u"not found:\t{}".format(w), file=sys.stderr)
-            count['miss'] += 1
+            if w in emb:
+                filtered_embeddings[w_id] = emb[w]
+                count['match'] += 1
+            else:
+                if opt.verbose:
+                    logger.info(u"not found:\t{}".format(w), file=sys.stderr)
+                count['miss'] += 1
 
     return torch.Tensor(filtered_embeddings), count
 
@@ -83,25 +146,29 @@ def main():
                         help="Skip first lines of the embedding file")
     parser.add_argument('-type', choices=["GloVe", "word2vec"],
                         default="GloVe")
+    parser.add_argument('-low_mem', action="store_true", default=False)
     opt = parser.parse_args()
 
     enc_vocab, dec_vocab = get_vocabs(opt.dict_file)
 
     skip_lines = 1 if opt.type == "word2vec" else opt.skip_lines
-    src_vectors = read_embeddings(opt.emb_file_enc, skip_lines)
-    logger.info("Got {} encoder embeddings from {}".format(
-        len(src_vectors), opt.emb_file_enc))
+    if not opt.low_mem:
+        src_vectors = read_embeddings(opt.emb_file_enc, skip_lines)
+        logger.info("Got {} encoder embeddings from {}".format(
+            len(src_vectors), opt.emb_file_enc))
 
-    tgt_vectors = read_embeddings(opt.emb_file_dec)
-    logger.info("Got {} decoder embeddings from {}".format(
-        len(tgt_vectors), opt.emb_file_dec))
-
+        tgt_vectors = read_embeddings(opt.emb_file_dec)
+        logger.info("Got {} decoder embeddings from {}".format(
+            len(tgt_vectors), opt.emb_file_dec))
+    else:
+        src_vectors, tgt_vectors = opt.emb_file_enc, opt.emb_file_dec
     filtered_enc_embeddings, enc_count = match_embeddings(
         enc_vocab, src_vectors, opt)
     filtered_dec_embeddings, dec_count = match_embeddings(
         dec_vocab, tgt_vectors, opt)
     logger.info("\nMatching: ")
     match_percent = [_['match'] / (_['match'] + _['miss']) * 100
+                     if (_['match'] + _['miss']) > 0 else 0
                      for _ in [enc_count, dec_count]]
     logger.info("\t* enc: %d match, %d missing, (%.2f%%)"
                 % (enc_count['match'],

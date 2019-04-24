@@ -1,5 +1,6 @@
 import argparse
 import os
+from math import floor
 
 import tqdm
 from multiprocessing import Manager
@@ -19,12 +20,159 @@ except ImportError:
 FINISHED = "finished"  # end-of-queue
 
 
+class C3D(nn.Module):
+    """
+    The C3D network as described in [1].
+    """
+
+    def __init__(self):
+        super(C3D, self).__init__()
+
+        self.conv1 = nn.Conv3d(3, 64, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.pool1 = nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2))
+
+        self.conv2 = nn.Conv3d(64, 128, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.zeropad1 = nn.ConstantPad3d((0, 0, 0, 0, 0, 1), 0)
+        self.pool2 = nn.MaxPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+        self.conv3a = nn.Conv3d(128, 256, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.conv3b = nn.Conv3d(256, 256, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.pool3 = nn.MaxPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+        self.conv4a = nn.Conv3d(256, 512, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.conv4b = nn.Conv3d(512, 512, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.pool4 = nn.MaxPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+        self.conv5a = nn.Conv3d(512, 512, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.conv5b = nn.Conv3d(512, 512, kernel_size=(3, 3, 3), padding=(1, 1, 1))
+        self.zeropad5 = nn.ConstantPad3d((0, 1, 0, 1, 0, 1), 0)
+        self.pool5 = nn.MaxPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+        self.fc6 = nn.Linear(8192, 4096)
+        self.fc7 = nn.Linear(4096, 4096)
+
+        self.relu = nn.ReLU()
+        self.cube = torch.from_numpy(
+            np.load("/home/dylan/Downloads/c3d_mean.npy"))\
+            .to(torch.float32)
+
+    def forward(self, x):
+        x = x.float()
+        x -= self.cube
+        x = x[:, :, :, 8:120, 30:142]
+        results = []
+        h = self.conv1(x)
+        h = self.relu(self.pool1(h))
+
+        h = self.conv2(h)
+        h = self.relu(self.pool2(self.zeropad1(h)))
+        results.append(h)
+
+        h = self.relu(self.conv3a(h))
+        h = self.conv3b(h)
+        h = self.relu(self.pool3(self.zeropad1(h)))
+        results.append(h)
+
+        h = self.relu(self.conv4a(h))
+        h = self.conv4b(h)
+        h = self.relu(self.pool4(self.zeropad1(h)))
+        results.append(h)
+
+        h = self.relu(self.conv5a(h))
+        h = self.conv5b(h)
+        h = self.relu(self.pool5(self.zeropad5(h)))
+        results.append(h)
+
+        # h = h.flatten(2).mean(2)
+        # results.append(h)
+
+        bsz = h.shape[0]
+        h = h.view(bsz, -1, 8192)
+        h = self.relu(self.fc6(h))
+        results.append(self.relu(self.fc7(h)))
+        return results
+
+    # def tops(self, x5):
+    #     bsz = x5.shape[0]
+    #     h = self.relu(self.fc6(x5.view(bsz, -1, 8192)))
+    #     return self.relu(self.fc7(h))
+
+
+class C3DFeatureExtractor(nn.Module):
+    def __init__(self):
+        super(C3DFeatureExtractor, self).__init__()
+        self.model = C3D()
+        sd = torch.load("/home/dylan/Downloads/c3d.pickle")
+        del sd["fc8.weight"]
+        del sd["fc8.bias"]
+        self.model.load_state_dict(sd)
+
+    def to(self, *args, **kwargs):
+        self.model.cube = self.model.cube.to(*args, **kwargs)
+        return super(C3DFeatureExtractor, self).to(*args, **kwargs)
+
+    def forward(self, x):
+        # x_2fps = x[:, :, ::10]
+        # if x.shape[2] % 10 != 1:
+        #     x_2fps = torch.cat((x_2fps, x[:, :, -1].unsqueeze(2)), 2)
+        # outps = self.model(x_2fps)
+        # feat_maps = outps[:4]
+        fvs = [[] for _ in range(5)]
+
+        lt16 = x.shape[2] < 16
+        while x.shape[2] < 16:
+            x = torch.cat([x, x], 2)
+
+        if lt16:
+            x = x[:, :, :16]
+
+        nframes = x.shape[2]
+        ct = 0
+        while True:
+            start = 8 * ct
+            if start >= nframes:
+                break
+            end = 8 * (ct + 2)
+            if end > nframes:
+                end = nframes
+                start = end - 16
+                if start < 0:
+                    start = 0
+                # bsz, nf, nz, nx, ny = x.shape
+                # x = torch.cat(
+                #     [x, torch.zeros((bsz, nf, end - nz, nx, ny),
+                #                     dtype=x.dtype, device=x.device)],
+                #     2)
+            seg = x[:, :, start:end]
+            for i, fv in enumerate(self.model(seg)):
+                fvs[i].append(fv)
+            ct += 1
+            if end == nframes:
+                break
+        feat_maps = [torch.stack(vs, -1).mean(-1) for vs in fvs]
+        # fv = torch.stack(fvs, -1).mean(-1)
+        # feat_maps.append(self.model.tops(fv).squeeze(1))
+        # bsz = fv.shape[0]
+        # feat_maps = [fm / fm.view(bsz, -1).norm(dim=1, keepdim=True)
+        #              for fm in feat_maps]
+        # set average mean to 1 based on yt2t means
+        # layer_means = [35.7437, -15.8307, -2.7768, -0.2413, -0.2413]
+        # layer_stds = [119.5741, 124.0031, 8.6424, 0.5234, 0.5234]
+        # feat_maps[:3] = \
+        #     [(fm - mean_l) / (4 * std_l)
+        #      for fm, mean_l, std_l
+        #      in zip(feat_maps[:3], layer_means, layer_stds)]
+        # feat_maps[4] = (feat_maps[4] - layer_means[4]) / layer_stds[4]
+        return feat_maps
+
+
 def read_to_imgs(file):
     """Yield images and their frame number from a video file."""
     vidcap = cv2.VideoCapture(file)
     success, image = vidcap.read()
     idx = 0
     while success:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         yield image, idx
         idx += 1
         success, image = vidcap.read()
@@ -37,9 +185,18 @@ def read_to_vids(file, cols, rows, nframes=16):
     success, image = vidcap.read()
     frames = []
     ct = 0
+    fps_cap = vidcap.get(cv2.CAP_PROP_FPS)
+    f_cap = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps_desired = 10
+    s = f_cap / fps_cap  # float
+    f_desired = int(floor(fps_desired * s))  # float
+    every_nth_float = f_cap / f_desired
+    include_frames = [floor(every_nth_float * i) for i in range(f_desired)] \
+                      + [f_cap - 1]
     while success:
-        if ct % nframes == 0:
+        if ct in include_frames:
             image = cv2.resize(image, (cols, rows))
+            # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             frames.append(image)
         success, image = vidcap.read()
         ct += 1
@@ -57,11 +214,11 @@ class VidDset(object):
         self.root_dir = root_dir
         self.filenames = filenames
         self.paths = [os.path.join(self.root_dir, f) for f in self.filenames]
-        self.return_vids = model_type == "i3d" or model_type == "none"
+        self.return_vids = model_type == "i3d" or \
+                           model_type == "c3d" or \
+                           model_type == "none"
         if model_type == "cnn":
             self.xform = TransformImage(model)
-        elif model_type == "i3d":
-            self.xform = lambda x: torch.from_numpy(x).permute(3, 0, 1, 2)
         else:
             self.xform = lambda x: torch.from_numpy(x).permute(3, 0, 1, 2)
 
@@ -74,7 +231,7 @@ class VidDset(object):
         path = self.paths[i]
         if self.return_vids:
             return [(path, _, self.xform(vid))
-                    for vid, _ in [read_to_vids(path, 224, 224)]]
+                    for vid, _ in [read_to_vids(path, 171, 128)]]
         else:
             return ((path, idx, self.xform(Image.fromarray(img)))
                     for img, idx in read_to_imgs(path))
@@ -138,55 +295,6 @@ class FeatureExtractor(nn.Module):
     def forward(self, x):
         return self.model.avgpool(
             self.model.features(x)).view(-1, 1, self.FEAT_SIZE)
-
-
-class I3DFE(I3D):
-    def forward(self, inp):
-        # Preprocessing
-        returns = []
-        out = self.conv3d_1a_7x7(inp)
-        out = self.maxPool3d_2a_3x3(out)
-        returns.append(out)
-        out = self.conv3d_2b_1x1(out)
-        out = self.conv3d_2c_3x3(out)
-        out = self.maxPool3d_3a_3x3(out)
-        returns.append(out)
-        out = self.mixed_3b(out)
-        out = self.mixed_3c(out)
-        out = self.maxPool3d_4a_3x3(out)
-        returns.append(out)
-        out = self.mixed_4b(out)
-        out = self.mixed_4c(out)
-        out = self.mixed_4d(out)
-        out = self.mixed_4e(out)
-        out = self.mixed_4f(out)
-        out = self.maxPool3d_5a_2x2(out)
-        returns.append(out)
-        out = self.mixed_5b(out)
-        out = self.mixed_5c(out)
-        out = self.avg_pool(out)
-        out = self.dropout(out)
-        # putting the mean before conv3d gives the same output on the
-        # I3D demo, so it would seem this is commutative with the conv3d
-        out = out.mean(-1, keepdim=True)
-        out = self.conv3d_0c_1x1(out)
-        returns.append(out)
-        return returns
-
-
-class I3DFeatureExtractor(nn.Module):
-    """Extract feature maps from a batch of videos."""
-    def __init__(self):
-        super(I3DFeatureExtractor, self).__init__()
-        # TODO: Expose flow
-        self.model = I3DFE(num_classes=400, modality="rgb")
-        # TODO: Expose this path!
-        self.model.load_state_dict(
-            torch.load("../../kinetics_i3d_pytorch/model/model_rgb.pth")
-        )
-
-    def forward(self, x):
-        return self.model(x)
 
 
 class VidSaver(object):
@@ -327,6 +435,8 @@ def run(device_id, world_size, root_dir, batch_size_per_device,
         fe = FeatureExtractor()
     elif model_type == "i3d":
         fe = I3DFeatureExtractor()
+    elif model_type == "c3d":
+        fe = C3DFeatureExtractor()
     else:
         fe = VidFeatureExtractor()
     dset = VidDset(fe.model, root_dir, these_files, model_type=model_type)
@@ -357,7 +467,7 @@ def run(device_id, world_size, root_dir, batch_size_per_device,
 def saver(out_path, model_type, feats_queue, finished_queue):
     if model_type == "cnn":
         rc = Reconstructor(out_path, finished_queue)
-    elif model_type == "i3d":
+    elif model_type == "i3d" or model_type == "c3d":
         rc = I3DSaver(out_path, finished_queue)
     else:
         rc = VidSaver(out_path, finished_queue)
@@ -382,7 +492,7 @@ if __name__ == "__main__":
                         help="Number of devices to run on.")
     parser.add_argument("--batch_size_per_device", type=int, default=512)
     parser.add_argument("--model_type", type=str,
-                        choices=["cnn", "i3d", "none"])
+                        choices=["cnn", "i3d", "c3d", "none"])
     opt = parser.parse_args()
 
     batch_size_per_device = opt.batch_size_per_device

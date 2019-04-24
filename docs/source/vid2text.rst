@@ -76,9 +76,11 @@ Change directories back to ``YT2T``:
 
     import pickle
     import os
+    from random import shuffle
 
 
     YT = "youtube2text_iccv15"
+    SHUFFLE = True
 
     with open(os.path.join(YT, "CAP.pkl"), "rb") as f:
         ann = pickle.load(f, encoding="latin-1")
@@ -107,7 +109,14 @@ Change directories back to ``YT2T``:
     train_cap = open("yt2t_train_cap.txt", "w")
     val_cap = open("yt2t_val_cap.txt", "w")
 
-    for vid_name, anns in vid2anns.items():
+    vid_names = vid2anns.keys()
+    if SHUFFLE:
+        vid_names = list(vid_names)
+        shuffle(vid_names)
+
+
+    for vid_name in vid_names:
+        anns = vid2anns[vid_name]
         vid_path = vid_name + ".npy"
         for i, an in enumerate(anns):
             an = an.replace("\n", " ")  # some caps have newlines
@@ -241,3 +250,128 @@ Still, there are some differences to note: We used ResNet 151 feature vectors (2
 uses GoogLeNet features (1024-D). We have selected every 16th frame from the whole video while the paper selects
 26 evenly spaced frames from the first 240 frames. We use the Adam optimizer while the paper uses Adadelta.
 And we stop after an arbitrary number of updates while the paper uses early stopping.
+
+The other Paper
+===============
+Get the data from here:
+
+https://github.com/zhegan27/SCN_for_video_captioning
+
+
+.. code-block:: python
+
+    import pickle
+    import os
+    from random import shuffle
+
+
+    SHUFFLE = True
+
+    with open("references.p", "rb") as f:
+        ref = pickle.load(f, encoding="latin-1")
+
+    ref_train, ref_val, ref_test = ref
+
+    all_vid_names = ["".join(["vid", str(i)]) for i in range(1, 1971)]
+
+    # train
+    vid_names_train = all_vid_names[:1200]
+    exp_vid_names_train = []
+    for vnt, tr in zip(vid_names_train, ref_train):
+        for r in tr:
+            exp_vid_names_train.append(vnt)
+    flat_ref_train = [r for rs in ref_train for r in rs]
+
+    if SHUFFLE:
+        train_idx = list(range(len(exp_vid_names_train)))
+        shuffle(train_idx)
+        exp_vid_names_train = [exp_vid_names_train[i] for i in train_idx]
+        flat_ref_train = [flat_ref_train[i] for i in train_idx]
+
+    train_cap = open("yt2t_train_cap.txt", "w")
+    train_files = open("yt2t_train_files.txt", "w")
+    for vid_name, an in zip(exp_vid_names_train, flat_ref_train):
+        vid_path = vid_name + ".npy"
+        train_files.write(vid_path + "\n")
+        train_cap.write(an + "\n")
+    train_cap.close()
+    train_files.close()
+
+    # val
+    vid_names_val = all_vid_names[1200:1300]
+    exp_vid_names_val = []
+    for vnv, vr in zip(vid_names_val, ref_val):
+        for r in vr:
+            exp_vid_names_val.append(vnv)
+    flat_ref_val = [r for rs in ref_val for r in rs]
+
+    val_cap = open("yt2t_val_cap.txt", "w")
+    val_files = open("yt2t_val_files.txt", "w")
+    for vid_name, an in zip(exp_vid_names_val, flat_ref_val):
+        vid_path = vid_name + ".npy"
+        val_files.write(vid_path + "\n")
+        val_cap.write(an + "\n")
+    val_cap.close()
+    val_files.close()
+
+    # test
+    vid_names_test = all_vid_names[1300:]
+
+    test_files = open("yt2t_test_files.txt", "w")
+    for vid_name in vid_names_test:
+        vid_path = vid_name + ".npy"
+        test_files.write(vid_path + "\n")
+    test_files.close()
+
+
+.. code-block:: python
+
+    import os
+    from pprint import pprint
+    from pycocoevalcap.bleu.bleu import Bleu
+    from pycocoevalcap.meteor.meteor import Meteor
+    from pycocoevalcap.rouge.rouge import Rouge
+    from pycocoevalcap.cider.cider import Cider
+    from pycocoevalcap.spice.spice import Spice
+
+
+    if __name__ == "__main__":
+        pred = open("pred.txt")
+
+        import pickle
+        import os
+
+        with open("references.p", "rb") as f:
+            ref = pickle.load(f, encoding="latin-1")
+
+        _, _, ref_test = ref
+        test_names = ["".join(["vid", str(i)]) for i in range(1301, 1971)]
+
+        test_files = open("yt2t_test_files.txt")
+
+        scorers = {
+            "Bleu": Bleu(4),
+            "Meteor": Meteor(),
+            "Rouge": Rouge(),
+            "Cider": Cider(),
+            "Spice": Spice()
+        }
+
+        gts = {}
+        res = {}
+        for outp, filename, anns in zip(pred, test_files, ref_test):
+            filename = filename.strip("\n")
+            outp = outp.strip("\n")
+            vid_id = os.path.splitext(filename)[0]
+            gts[vid_id] = anns
+            res[vid_id] = [outp]
+
+        scores = {}
+        for name, scorer in scorers.items():
+            score, all_scores = scorer.compute_score(gts, res)
+            if isinstance(score, list):
+                for i, sc in enumerate(score, 1):
+                    scores[name + str(i)] = sc
+            else:
+                scores[name] = score
+        pprint(scores)
